@@ -1,4 +1,5 @@
-use std::cmp::min;
+// Based on https://packt.medium.com/implementing-terminal-i-o-in-rust-4a44652b0f11
+
 use std::env::args;
 use std::fs;
 use std::io::{stdin, stdout, Write};
@@ -18,6 +19,7 @@ struct Coordinates {
 }
 struct HexViewer {
 	doc: Doc,
+	cur_byte: isize,
 	rows: usize,
 	hex_columns: usize,
 	cur_pos: Coordinates,
@@ -34,11 +36,12 @@ impl HexViewer {
 
 		Self {
 			doc: doc_file,
+			cur_byte: 0,
 			rows,
 			hex_columns: hex_columns,
 			cur_pos: Coordinates {
-				x: 1,
-				y: rows,
+				x: 12,
+				y: 1,
 			},
 			terminal_size: Coordinates {
 				x: size.0 as usize,
@@ -55,37 +58,95 @@ impl HexViewer {
 
 		print!("{}{}", termion::clear::All,
 			termion::cursor::Goto(1, 1));
-		println!(
-			"{}{}Welcome to HEXIM Hex Editor\r{}",
-			color::Bg(color::Black),
-			color::Fg(color::White),
-			style::Reset
-		);
-
-		for row in 0..self.rows {
-			print!("{:08X} |", row * self.hex_columns);
-			for index in (row * self.hex_columns)..min(((row +1) * self.hex_columns), self.doc.bytes.len()) {
-				print!(" {:02X}", self.doc.bytes[index])
+		
+		if self.rows < self.terminal_size.y { 
+			for row in 0..self.rows {
+				print!("{:08X} |", row * self.hex_columns);
+				for index in (row * self.hex_columns)..(row +1) * self.hex_columns {
+					self.print_bit(index);
+				}
+				println!("\r")
 			}
-			println!("\r")
+		} else {
+			if pos.y <= self.terminal_size.y {
+				for row in 0..(self.terminal_size.y -3) {
+					print!("{:08X} |", row * self.hex_columns);
+					for index in (row * self.hex_columns)..(row +1) * self.hex_columns {
+						self.print_bit(index);
+					}
+					println!("\r");
+				}
+			} else {
+				for row in (pos.y - (self.terminal_size.y -3))..pos.y {
+					print!("{:08X} |", row * self.hex_columns);
+					for index in (row * self.hex_columns)..(row +1) * self.hex_columns {
+						self.print_bit(index);
+					}
+					println!("\r");
+				}
+			}
 		}
 
 		println!("{}", termion::cursor::Goto(0, (self.terminal_size.y - 2) as u16),);
 
-		println!(
-			"{}{} line-count={} Filename: {}{}",
-			color::Fg(color::Red),
-			style::Bold,
-			self.rows,
-			self.file_name,
-			style::Reset
-		);
+		if self.cur_byte >= 0 {
+			println!(
+				"{}{} 0x{:08X} ({},{}) line-count={} Filename: {}{}",
+				color::Fg(color::Red),
+				style::Bold,
+				self.cur_byte,
+				(self.cur_pos.x - 9) / 3,
+				self.cur_pos.y,
+				self.rows,
+				self.file_name,
+				style::Reset
+			);
+		} else {
+			println!(
+				"{}{} UNDEFINED! ({},{}) line-count={} Filename: {}{}",
+				color::Fg(color::Red),
+				style::Bold,
+				(self.cur_pos.x - 9) / 3,
+				self.cur_pos.y,
+				self.rows,
+				self.file_name,
+				style::Reset
+			);
+		}
+
 		self.set_pos(old_x, old_y);
+	}
+
+	fn print_bit(&self, index: usize) {
+		if index >= self.doc.bytes.len() {
+			if index == (self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3{
+				print!(" {}{}XX{}",
+				color::Bg(color::Red),
+				color::Fg(color::White),
+				style::Reset);
+			} else {
+				print!(" {}XX{}",
+					color::Fg(color::Red),
+					style::Reset);
+			}
+		} else {
+			if index == self.cur_byte as usize {
+				print!(" {}{}{:02X}{}",
+					color::Bg(color::Black),
+					color::Fg(color::White),
+					self.doc.bytes[index],
+					style::Reset);
+			} else {
+				print!(" {:02X}", self.doc.bytes[index]);
+			}
+		}
 	}
 
 	fn set_pos(&mut self, x: usize, y: usize) {
 		self.cur_pos.x = x;
 		self.cur_pos.y = y;
+		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
+		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
 		println!("{}",
 			termion::cursor::Goto(self.cur_pos.x as u16, (self.cur_pos.y) as u16)
 		);
@@ -97,12 +158,78 @@ impl HexViewer {
 		for c in stdin.keys() {
 			match c.unwrap() {
 				Key::Ctrl('q') => {
+					println!("{}", termion::cursor::Show);
 					break;
+				}
+				Key::Left | Key::Char('h') => {
+					self.dec_x();
+					self.show_document();
+				}
+				Key::Right | Key::Char('l') => {
+					self.inc_x();
+					self.show_document();
+				}
+				Key::Up | Key::Char('k') => {
+					self.dec_y();
+					self.show_document();
+				}
+				Key::Down | Key::Char('j') => {
+					self.inc_y();
+					self.show_document();
+				}
+				Key::Backspace => {
+					self.dec_x();
+				}
+				_=> {}
 			}
-			_=> {}
-			}
+
 			stdout.flush().unwrap();
 		}
+	}
+
+	fn inc_x(&mut self) {
+		if self.cur_pos.x < self.terminal_size.x -2 {
+			self.cur_pos.x += 3;
+		}
+		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
+		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
+		println!(
+			"{}",
+			termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
+		);
+	}
+	fn dec_x(&mut self) {
+		if self.cur_pos.x > 12 {
+			self.cur_pos.x -= 3;
+		}
+		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
+		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
+		println!(
+			"{}",
+			termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
+		);
+	}
+	fn inc_y(&mut self) {
+		if self.cur_pos.y < self.rows {
+			self.cur_pos.y += 1;
+		}
+		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
+		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
+		println!(
+			"{}",
+			termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
+		);
+	}
+	fn dec_y(&mut self) {
+		if self.cur_pos.y > 1 {
+			self.cur_pos.y -= 1;
+		}
+		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
+		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
+		println!(
+			"{}",
+			termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
+		);
 	}
 }
 
@@ -120,7 +247,7 @@ fn main() {
 		std::process::exit(0);
 	}
 	// Open file & load into struct
-	println!("{}", termion::cursor::Show);
+	println!("{}", termion::cursor::Hide);
 	// Initialize viewer
 	let mut viewer = HexViewer::init(&args[1]);
 	viewer.show_document();
