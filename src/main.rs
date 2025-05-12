@@ -165,14 +165,70 @@ impl HexViewer {
 	fn run(&mut self) {
 		let mut stdout = stdout().into_raw_mode().unwrap();
 		let stdin = stdin();
-		for c in stdin.keys() {
-			match c.unwrap() {
+		let mut keys = stdin.keys();
+		while let Some(Ok(c)) = keys.next() {
+			match c {
 				Key::Ctrl('q') => {
 					break;
 				}
 				Key::Ctrl('o') => {
-					if self.read_only {
-						break;
+					if !self.read_only {
+						 // Temporarily disable raw mode to allow `read_line` to work
+						drop(stdout); // Drop raw mode
+						print!(
+							"{}{}Output directory: {}",
+							termion::cursor::Goto(1, self.terminal_size.y as u16),
+							termion::clear::CurrentLine,
+							style::Reset
+						);
+						std::io::stdout().flush().unwrap();
+
+						let mut input = String::new();
+						std::io::stdin().read_line(&mut input).unwrap();
+						let output_dir = input.trim();
+
+						// Re-enable raw mode
+                    	stdout = std::io::stdout().into_raw_mode().unwrap();
+						self.show_document();
+		
+						if let Ok(mut file) = std::fs::File::create(output_dir) {
+							match file.write_all(self.doc.bytes.by_ref()) {
+								Ok(_) => {
+									print!(
+										"{}{}File saved to: {}{}",
+										termion::cursor::Goto(1, self.terminal_size.y as u16),
+										termion::clear::CurrentLine,
+										output_dir,
+										style::Reset
+									);
+								}
+								Err(e) => {
+									print!(
+										"{}{}Error saving file: {}{}",
+										termion::cursor::Goto(1, self.terminal_size.y as u16),
+										termion::clear::CurrentLine,
+										e,
+										style::Reset
+									);
+								}
+							}
+						} else {
+							print!(
+								"{}{}Error opening file: {}{}",
+								termion::cursor::Goto(1, self.terminal_size.y as u16),
+								termion::clear::CurrentLine,
+								output_dir,
+								style::Reset
+							);
+						}
+						stdout.flush().unwrap();
+					} else {
+						print!(
+							"{}{}File is opened in Read-Only Mode {}",
+							termion::cursor::Goto(1, self.terminal_size.y as u16),
+							termion::clear::CurrentLine,
+							style::Reset
+						);
 					}
 				}
 				Key::Left | Key::Char('h') => {
