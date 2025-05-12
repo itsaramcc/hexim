@@ -19,6 +19,7 @@ struct Coordinates {
 }
 struct HexViewer {
 	doc: Doc,
+	read_only: bool,
 	cur_byte: isize,
 	start_row: usize,
 	rows: usize,
@@ -29,7 +30,7 @@ struct HexViewer {
 }
 
 impl HexViewer {
-	fn init_file(file_name: &str) -> Self {
+	fn init_file(file_name: &str, read_only: bool) -> Self {
 		let doc_file = Doc { bytes: fs::read(file_name).unwrap() };
 		let size = termion::terminal_size().unwrap();
 		let hex_columns: usize = (size.0 as usize - 10) / 3;
@@ -37,6 +38,7 @@ impl HexViewer {
 
 		Self {
 			doc: doc_file,
+			read_only,
 			cur_byte: 0,
 			start_row: 0,
 			rows,
@@ -53,7 +55,7 @@ impl HexViewer {
 		}
 	}
 
-		fn init_empty(length: usize) -> Self {
+		fn init_length(length: usize, read_only: bool) -> Self {
 		let doc_file = Doc { bytes: vec![0; length] };
 		let size = termion::terminal_size().unwrap();
 		let hex_columns: usize = (size.0 as usize - 10) / 3;
@@ -61,6 +63,7 @@ impl HexViewer {
 
 		Self {
 			doc: doc_file,
+			read_only,
 			cur_byte: 0,
 			start_row: 0,
 			rows,
@@ -167,6 +170,11 @@ impl HexViewer {
 				Key::Ctrl('q') => {
 					break;
 				}
+				Key::Ctrl('o') => {
+					if self.read_only {
+						break;
+					}
+				}
 				Key::Left | Key::Char('h') => {
 					self.dec_x();
 					self.show_document();
@@ -264,6 +272,15 @@ fn main() {
                 .required(false)
                 .conflicts_with_all(["input_pos", "create"]),
         )
+		.arg(
+            Arg::new("create")
+                .short('c')
+                .long("create")
+                .help("Create a new file with a specified length")
+                .value_name("LENGTH")
+                .value_parser(clap::value_parser!(usize))
+                .conflicts_with_all(["input_pos", "input_flag", "read_only"]),
+        )
         .arg(
             Arg::new("read_only")
                 .short('r')
@@ -272,14 +289,13 @@ fn main() {
                 .action(ArgAction::SetTrue)
                 .conflicts_with("create"),
         )
-        .arg(
-            Arg::new("create")
-                .short('c')
-                .long("create")
-                .help("Create a new file with a specified length")
-                .value_name("LENGTH")
-                .value_parser(clap::value_parser!(usize))
-                .conflicts_with_all(["input_pos", "input_flag"]),
+		.arg(
+            Arg::new("dump")
+                .short('d')
+                .long("dump")
+                .help("Dumps the hex output into terminal")
+                .action(ArgAction::SetTrue)
+                .conflicts_with_all(["create", "read_only"]),
         )
         .get_matches();
 
@@ -287,28 +303,49 @@ fn main() {
 	 let input = matches
         .get_one::<String>("input_flag")
         .or(matches.get_one::<String>("input_pos"));
-
-    let read_only = matches.get_flag("read_only");
     let create = matches.get_one::<usize>("create");
+	let read_only = matches.get_flag("read_only");
+	let dump = matches.get_flag("dump");
 
     // Default behavior handling
-    if !read_only && create.is_none() && input.is_none() {
+    if create.is_none() && input.is_none() {
         eprintln!("Error: input file is required unless using --create");
 		eprintln!("Usage: see --help for usage");
         std::process::exit(1);
     }
 
-
+	// Handle Dump Flag
+	if dump {
+		if let Option::Some(file_name) = input {
+			let viewer = HexViewer::init_file(file_name, read_only);
+			for row in 0..viewer.rows {
+				print!("{:08X} |", row * viewer.hex_columns);
+				for index in (row * viewer.hex_columns)..(row +1) * viewer.hex_columns {
+					if index >= viewer.doc.bytes.len() {
+						print!(" {}--{}",
+							color::Fg(color::Red),
+							style::Reset);
+					} else {
+						print!(" {:02X}", viewer.doc.bytes[index]);
+					}
+				}
+				println!()
+			}
+		}
+		println!();
+		std::process::exit(0);
+	}
+	
 	// Open file & load into struct
 	println!("{}", termion::screen::ToAlternateScreen);
 	println!("{}", termion::cursor::Hide);
 	if let Option::Some(file_name) = input {
-		let mut viewer = HexViewer::init_file(file_name);
+		let mut viewer = HexViewer::init_file(file_name, read_only);
 		viewer.show_document();
 		viewer.run();
 	}
 	if let Option::Some(length) = create {
-		let mut viewer = HexViewer::init_empty(*length);
+		let mut viewer = HexViewer::init_length(*length, read_only);
 		viewer.show_document();
 		viewer.run();
 	}
