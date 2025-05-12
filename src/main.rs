@@ -32,7 +32,7 @@ struct HexViewer {
 impl HexViewer {
 	fn init_file(file_name: &str, read_only: bool) -> Self {
 		let doc_file = Doc { bytes: fs::read(file_name).unwrap() };
-		let size = termion::terminal_size().unwrap();
+		let size = termion::terminal_size().unwrap_or((80, 80));
 		let hex_columns: usize = (size.0 as usize - 10) / 3;
 		let rows = (doc_file.bytes.len() +hex_columns -1) / hex_columns;
 
@@ -322,9 +322,7 @@ fn main() {
 				print!("{:08X} |", row * viewer.hex_columns);
 				for index in (row * viewer.hex_columns)..(row +1) * viewer.hex_columns {
 					if index >= viewer.doc.bytes.len() {
-						print!(" {}--{}",
-							color::Fg(color::Red),
-							style::Reset);
+						print!(" --");
 					} else {
 						print!(" {:02X}", viewer.doc.bytes[index]);
 					}
