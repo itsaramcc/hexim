@@ -1,6 +1,7 @@
 // Based on https://packt.medium.com/implementing-terminal-i-o-in-rust-4a44652b0f11
 
 use clap::{Arg, ArgAction, Command};
+use std::collections::HashSet;
 use std::fs;
 use std::io::{stdin, stdout, Write};
 use termion::event::Key;
@@ -20,6 +21,7 @@ struct Coordinates {
 struct HexViewer {
 	doc: Doc,
 	read_only: bool,
+	history: Vec<(usize, u8)>,
 	cur_byte: isize,
 	start_row: usize,
 	rows: usize,
@@ -39,6 +41,7 @@ impl HexViewer {
 		Self {
 			doc: doc_file,
 			read_only,
+			history: vec![],
 			cur_byte: 0,
 			start_row: 0,
 			rows,
@@ -64,6 +67,7 @@ impl HexViewer {
 		Self {
 			doc: doc_file,
 			read_only,
+			history: vec![],
 			cur_byte: 0,
 			start_row: 0,
 			rows,
@@ -128,6 +132,7 @@ impl HexViewer {
 	}
 
 	fn print_bit(&self, index: usize) {
+		let changed_bytes: HashSet<usize> = self.history.iter().map(|(byte, _)| *byte).collect();
 		if index >= self.doc.bytes.len() {
 			if index == (self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3{
 				print!(" {}{}--{}",
@@ -147,7 +152,14 @@ impl HexViewer {
 					self.doc.bytes[index],
 					style::Reset);
 			} else {
-				print!(" {:02X}", self.doc.bytes[index]);
+				if changed_bytes.contains(&index) {
+					print!(" {}{:02X}{}",
+						color::Bg(color::LightCyan),
+						self.doc.bytes[index],
+						style::Reset);
+				} else {
+					print!(" {:02X}", self.doc.bytes[index]);
+				}
 			}
 		}
 	}
@@ -190,45 +202,132 @@ impl HexViewer {
 						// Re-enable raw mode
                     	stdout = std::io::stdout().into_raw_mode().unwrap();
 						self.show_document();
-		
-						if let Ok(mut file) = std::fs::File::create(output_dir) {
-							match file.write_all(self.doc.bytes.by_ref()) {
-								Ok(_) => {
-									print!(
-										"{}{}File saved to: {}{}",
-										termion::cursor::Goto(1, self.terminal_size.y as u16),
-										termion::clear::CurrentLine,
-										output_dir,
-										style::Reset
-									);
-								}
-								Err(e) => {
-									print!(
-										"{}{}Error saving file: {}{}",
-										termion::cursor::Goto(1, self.terminal_size.y as u16),
-										termion::clear::CurrentLine,
-										e,
-										style::Reset
-									);
-								}
-							}
-						} else {
+						
+
+						if output_dir.is_empty() {
+							// Escape saving if input is empty
 							print!(
-								"{}{}Error opening file: {}{}",
+								"{}{}File saving canceled.{}",
 								termion::cursor::Goto(1, self.terminal_size.y as u16),
 								termion::clear::CurrentLine,
-								output_dir,
 								style::Reset
 							);
+						} else {
+							if let Ok(mut file) = std::fs::File::create(output_dir) {
+								match file.write_all(self.doc.bytes.by_ref()) {
+									Ok(_) => {
+										print!(
+											"{}{}File saved to: {}{}",
+											termion::cursor::Goto(1, self.terminal_size.y as u16),
+											termion::clear::CurrentLine,
+											output_dir,
+											style::Reset
+										);
+									}
+									Err(e) => {
+										print!(
+											"{}{}Error saving file: {}{}",
+											termion::cursor::Goto(1, self.terminal_size.y as u16),
+											termion::clear::CurrentLine,
+											e,
+											style::Reset
+										);
+									}
+								}
+							} else {
+								print!(
+									"{}{}Error opening file: {}{}",
+									termion::cursor::Goto(1, self.terminal_size.y as u16),
+									termion::clear::CurrentLine,
+									output_dir,
+									style::Reset
+								);
+							}
 						}
-						stdout.flush().unwrap();
 					} else {
 						print!(
-							"{}{}File is opened in Read-Only Mode {}",
+							"{}{}Unable to save! File is opened in Read-Only Mode {}",
 							termion::cursor::Goto(1, self.terminal_size.y as u16),
 							termion::clear::CurrentLine,
 							style::Reset
 						);
+					}
+				}
+				Key::Char('i') => {
+					if self.read_only {
+						print!(
+							"{}{}Unable to edit! File is opened in Read-Only Mode {}",
+							termion::cursor::Goto(1, self.terminal_size.y as u16),
+							termion::clear::CurrentLine,
+							style::Reset
+						);
+					} else if self.cur_byte == -1 {
+						print!(
+							"{}{}Unable to edit current cell! Address is unavailable {}",
+							termion::cursor::Goto(1, self.terminal_size.y as u16),
+							termion::clear::CurrentLine,
+							style::Reset
+						);
+					} else {
+						drop(stdout); // Drop raw mode
+						print!(
+							"{}{}New value for 0x{:08X}: {}",
+							termion::cursor::Goto(1, self.terminal_size.y as u16),
+							termion::clear::CurrentLine,
+							self.cur_byte,
+							style::Reset
+						);
+						std::io::stdout().flush().unwrap();
+
+						let mut input = String::new();
+						std::io::stdin().read_line(&mut input).unwrap();
+						let input = input.trim();
+
+						// Re-enable raw mode
+                    	stdout = std::io::stdout().into_raw_mode().unwrap();
+						self.show_document();
+
+						// Parse the input as a hexadecimal value
+						match u8::from_str_radix(input, 16) {
+							Ok(value) => {
+								if let Some(byte) = self.doc.bytes.get_mut(self.cur_byte as usize) {
+									self.history.push((self.cur_byte as usize, *byte));
+									*byte = value;
+									self.show_document();
+									print!(
+										"{}{}Value of 0x{:08X} updated to: {:02X}{}",
+										termion::cursor::Goto(1, self.terminal_size.y as u16),
+										termion::clear::CurrentLine,
+										self.cur_byte,
+										value,
+										style::Reset
+									);
+								}
+							}
+							Err(_) => {
+								print!(
+									"{}{}Invalid hexadecimal input!{}",
+									termion::cursor::Goto(1, self.terminal_size.y as u16),
+									termion::clear::CurrentLine,
+									style::Reset
+								);
+							}
+						}
+					}
+				}
+				Key::Ctrl('z') => {
+					if let Some(last) = self.history.pop() {
+						if let Some(byte) = self.doc.bytes.get_mut(last.0) {
+							*byte = last.1;
+							self.show_document();
+							print!(
+								"{}{}Undid value of 0x{:08X}{}",
+								termion::cursor::Goto(1, self.terminal_size.y as u16),
+								termion::clear::CurrentLine,
+								last.0,
+								style::Reset
+							);
+						}
 					}
 				}
 				Key::Left | Key::Char('h') => {
