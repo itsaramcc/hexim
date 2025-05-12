@@ -434,7 +434,7 @@ fn main() {
                 .help("Create a new file with a specified length")
                 .value_name("LENGTH")
                 .value_parser(clap::value_parser!(usize))
-                .conflicts_with_all(["input_pos", "input_flag", "read_only"]),
+                .conflicts_with_all(["input_pos", "input_flag", "read_only", "dump"]),
         )
         .arg(
             Arg::new("read_only")
@@ -442,7 +442,7 @@ fn main() {
                 .long("read-only")
                 .help("Enable read-only mode")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("create"),
+                .conflicts_with_all(["create", "dump"]),
         )
 		.arg(
             Arg::new("dump")
