@@ -1,2 +1,2 @@
 # HEXIM
-A terminal based Hex Editor written in Rust
+ A Hex Editor CLI written in Rust. 

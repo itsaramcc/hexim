@@ -1,6 +1,6 @@
 // Based on https://packt.medium.com/implementing-terminal-i-o-in-rust-4a44652b0f11
 
-use std::env::args;
+use clap::{Arg, ArgAction, Command};
 use std::fs;
 use std::io::{stdin, stdout, Write};
 use termion::event::Key;
@@ -29,7 +29,7 @@ struct HexViewer {
 }
 
 impl HexViewer {
-	fn init(file_name: &str) -> Self {
+	fn init_file(file_name: &str) -> Self {
 		let doc_file = Doc { bytes: fs::read(file_name).unwrap() };
 		let size = termion::terminal_size().unwrap();
 		let hex_columns: usize = (size.0 as usize - 10) / 3;
@@ -50,6 +50,30 @@ impl HexViewer {
 				y: size.1 as usize,
 			},
 			file_name: file_name.into(),
+		}
+	}
+
+		fn init_empty(length: usize) -> Self {
+		let doc_file = Doc { bytes: vec![0; length] };
+		let size = termion::terminal_size().unwrap();
+		let hex_columns: usize = (size.0 as usize - 10) / 3;
+		let rows = (doc_file.bytes.len() +hex_columns -1) / hex_columns;
+
+		Self {
+			doc: doc_file,
+			cur_byte: 0,
+			start_row: 0,
+			rows,
+			hex_columns: hex_columns,
+			cur_pos: Coordinates {
+				x: 12,
+				y: 1,
+			},
+			terminal_size: Coordinates {
+				x: size.0 as usize,
+				y: size.1 as usize,
+			},
+			file_name: "untitled.txt".to_string(),
 		}
 	}
 
@@ -222,25 +246,73 @@ impl HexViewer {
 }
 
 fn main() {
-	//Get arguments from command line
-	let args: Vec<String> = args().collect();
-	if args.len() < 2 {
-		println!("Please provide file name as argument");
-		std::process::exit(0);
-	}
-	//Check if file exists. If not, print error
-	// message and exit process
-	if !std::path::Path::new(&args[1]).exists() {
-		println!("File does not exist");
-		std::process::exit(0);
-	}
+	let matches = Command::new("hexim")
+        .version("1.0")
+        .about("A Hex Editor CLI written in Rust.")
+		.arg(
+            Arg::new("input_pos")
+				.help("Input file (positional)")
+                .index(1)
+                .required(false)
+				.conflicts_with_all(["input_flag", "create"]),
+        )
+        .arg(
+            Arg::new("input_flag")
+				.short('i')
+				.long("input")
+                .help("Input file (flag)")
+                .required(false)
+                .conflicts_with_all(["input_pos", "create"]),
+        )
+        .arg(
+            Arg::new("read_only")
+                .short('r')
+                .long("read-only")
+                .help("Enable read-only mode")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("create"),
+        )
+        .arg(
+            Arg::new("create")
+                .short('c')
+                .long("create")
+                .help("Create a new file with a specified length")
+                .value_name("LENGTH")
+                .value_parser(clap::value_parser!(usize))
+                .conflicts_with_all(["input_pos", "input_flag"]),
+        )
+        .get_matches();
+
+    // Parse values
+	 let input = matches
+        .get_one::<String>("input_flag")
+        .or(matches.get_one::<String>("input_pos"));
+
+    let read_only = matches.get_flag("read_only");
+    let create = matches.get_one::<usize>("create");
+
+    // Default behavior handling
+    if !read_only && create.is_none() && input.is_none() {
+        eprintln!("Error: input file is required unless using --create");
+		eprintln!("Usage: see --help for usage");
+        std::process::exit(1);
+    }
+
+
 	// Open file & load into struct
 	println!("{}", termion::screen::ToAlternateScreen);
 	println!("{}", termion::cursor::Hide);
+	if let Option::Some(file_name) = input {
+		let mut viewer = HexViewer::init_file(file_name);
+		viewer.show_document();
+		viewer.run();
+	}
+	if let Option::Some(length) = create {
+		let mut viewer = HexViewer::init_empty(*length);
+		viewer.show_document();
+		viewer.run();
+	}
 	// Initialize viewer
-	let mut viewer = HexViewer::init(&args[1]);
-	viewer.show_document();
-	viewer.run();
 	println!("{}", termion::cursor::Show);
 	println!("{}", termion::screen::ToMainScreen);
 }
