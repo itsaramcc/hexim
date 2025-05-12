@@ -20,6 +20,7 @@ struct Coordinates {
 struct HexViewer {
 	doc: Doc,
 	cur_byte: isize,
+	start_row: usize,
 	rows: usize,
 	hex_columns: usize,
 	cur_pos: Coordinates,
@@ -37,6 +38,7 @@ impl HexViewer {
 		Self {
 			doc: doc_file,
 			cur_byte: 0,
+			start_row: 0,
 			rows,
 			hex_columns: hex_columns,
 			cur_pos: Coordinates {
@@ -52,46 +54,22 @@ impl HexViewer {
 	}
 
 	fn show_document(&mut self) {
-
-		let pos = &self.cur_pos;
-		let (old_x, old_y) = (pos.x, pos.y);
-
 		print!("{}{}", termion::clear::All,
 			termion::cursor::Goto(1, 1));
 		
-		if self.rows < self.terminal_size.y { 
-			for row in 0..self.rows {
-				print!("{:08X} |", row * self.hex_columns);
-				for index in (row * self.hex_columns)..(row +1) * self.hex_columns {
-					self.print_bit(index);
-				}
-				println!("\r")
+		for row in self.start_row..std::cmp::min(self.start_row + self.terminal_size.y - 3,self.rows)  {
+			print!("{:08X} |", row * self.hex_columns);
+			for index in (row * self.hex_columns)..(row +1) * self.hex_columns {
+				self.print_bit(index);
 			}
-		} else {
-			if pos.y <= self.terminal_size.y {
-				for row in 0..(self.terminal_size.y -3) {
-					print!("{:08X} |", row * self.hex_columns);
-					for index in (row * self.hex_columns)..(row +1) * self.hex_columns {
-						self.print_bit(index);
-					}
-					println!("\r");
-				}
-			} else {
-				for row in (pos.y - (self.terminal_size.y -3))..pos.y {
-					print!("{:08X} |", row * self.hex_columns);
-					for index in (row * self.hex_columns)..(row +1) * self.hex_columns {
-						self.print_bit(index);
-					}
-					println!("\r");
-				}
-			}
+			println!("\r")
 		}
 
-		println!("{}", termion::cursor::Goto(0, (self.terminal_size.y - 2) as u16),);
+		println!("{}", termion::cursor::Goto(1, (self.terminal_size.y - 2) as u16),);
 
 		if self.cur_byte >= 0 {
-			println!(
-				"{}{} 0x{:08X} ({},{}) line-count={} Filename: {}{}",
+			print!(
+				"{}{}{:08X} ({},{}) line-count={} Filename: {}{}",
 				color::Fg(color::Red),
 				style::Bold,
 				self.cur_byte,
@@ -102,8 +80,8 @@ impl HexViewer {
 				style::Reset
 			);
 		} else {
-			println!(
-				"{}{} UNDEFINED! ({},{}) line-count={} Filename: {}{}",
+			print!(
+				"{}{}-------- ({},{}) line-count={} Filename: {}{}",
 				color::Fg(color::Red),
 				style::Bold,
 				(self.cur_pos.x - 9) / 3,
@@ -114,18 +92,23 @@ impl HexViewer {
 			);
 		}
 
-		self.set_pos(old_x, old_y);
+		// print!(
+		// 	"{}",
+		// 	termion::cursor::Goto(1, self.terminal_size.y as u16)
+		// );
+
+		self.set_pos(self.cur_pos.x, self.cur_pos.y);
 	}
 
 	fn print_bit(&self, index: usize) {
 		if index >= self.doc.bytes.len() {
 			if index == (self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3{
-				print!(" {}{}XX{}",
+				print!(" {}{}--{}",
 				color::Bg(color::Red),
 				color::Fg(color::White),
 				style::Reset);
 			} else {
-				print!(" {}XX{}",
+				print!(" {}--{}",
 					color::Fg(color::Red),
 					style::Reset);
 			}
@@ -147,7 +130,7 @@ impl HexViewer {
 		self.cur_pos.y = y;
 		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
 		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
-		println!("{}",
+		print!("{}",
 			termion::cursor::Goto(self.cur_pos.x as u16, (self.cur_pos.y) as u16)
 		);
 	}
@@ -158,7 +141,6 @@ impl HexViewer {
 		for c in stdin.keys() {
 			match c.unwrap() {
 				Key::Ctrl('q') => {
-					println!("{}", termion::cursor::Show);
 					break;
 				}
 				Key::Left | Key::Char('h') => {
@@ -193,10 +175,10 @@ impl HexViewer {
 		}
 		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
 		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
-		println!(
-			"{}",
-			termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
-		);
+		// print!(
+		// 	"{}",
+		// 	termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
+		// );
 	}
 	fn dec_x(&mut self) {
 		if self.cur_pos.x > 12 {
@@ -204,32 +186,38 @@ impl HexViewer {
 		}
 		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
 		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
-		println!(
-			"{}",
-			termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
-		);
+		// print!(
+		// 	"{}",
+		// 	termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
+		// );
 	}
 	fn inc_y(&mut self) {
 		if self.cur_pos.y < self.rows {
 			self.cur_pos.y += 1;
 		}
+		if self.cur_pos.y > self.start_row + self.terminal_size.y - 3 && self.start_row < self.rows - self.terminal_size.y + 3 { self.start_row += 1; }
+
 		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
 		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
-		println!(
-			"{}",
-			termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
-		);
+
+		// print!(
+		// 	"{}",
+		// 	termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
+		// );
 	}
 	fn dec_y(&mut self) {
 		if self.cur_pos.y > 1 {
 			self.cur_pos.y -= 1;
 		}
+		if self.cur_pos.y < self.start_row { self.start_row = self.cur_pos.y -1; }
+
 		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
 		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
-		println!(
-			"{}",
-			termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
-		);
+
+		// print!(
+		// 	"{}",
+		// 	termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
+		// );
 	}
 }
 
@@ -247,9 +235,12 @@ fn main() {
 		std::process::exit(0);
 	}
 	// Open file & load into struct
+	println!("{}", termion::screen::ToAlternateScreen);
 	println!("{}", termion::cursor::Hide);
 	// Initialize viewer
 	let mut viewer = HexViewer::init(&args[1]);
 	viewer.show_document();
 	viewer.run();
+	println!("{}", termion::cursor::Show);
+	println!("{}", termion::screen::ToMainScreen);
 }
