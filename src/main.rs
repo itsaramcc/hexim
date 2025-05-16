@@ -80,7 +80,7 @@ impl HexViewer {
 				x: size.0 as usize,
 				y: size.1 as usize,
 			},
-			file_name: "untitled.txt".to_string(),
+			file_name: "untitled".to_string(),
 		}
 	}
 
@@ -186,47 +186,21 @@ impl HexViewer {
 		let mut keys = stdin.keys();
 		while let Some(Ok(c)) = keys.next() {
 			match c {
-				Key::Ctrl('q') => {
+				Key::Ctrl('x') => {
 					break;
 				}
 				Key::Ctrl('o') => {
 					if !self.read_only {
-						 // Temporarily disable raw mode to allow `read_line` to work
-						drop(stdout); // Drop raw mode
-						print!(
-							"{}{}Output directory: {}",
-							termion::cursor::Goto(1, self.terminal_size.y as u16),
-							termion::clear::CurrentLine,
-							style::Reset
-						);
-						std::io::stdout().flush().unwrap();
-
-						let mut input = String::new();
-						std::io::stdin().read_line(&mut input).unwrap();
-						let output_dir = input.trim();
-
-						// Re-enable raw mode
-                    	stdout = std::io::stdout().into_raw_mode().unwrap();
-						self.show_document();
-						
-
-						if output_dir.is_empty() {
-							// Escape saving if input is empty
-							print!(
-								"{}{}File saving canceled.{}",
-								termion::cursor::Goto(1, self.terminal_size.y as u16),
-								termion::clear::CurrentLine,
-								style::Reset
-							);
-						} else {
-							if let Ok(mut file) = std::fs::File::create(output_dir) {
+						let default_name: String = if self.file_name == "untitled" { "".to_owned() } else { self.file_name.clone() };
+						if let Some(path) = self.read_input_line("Output file path: ", &default_name) {
+							if let Ok(mut file) = std::fs::File::create(path.as_str()) {
 								match file.write_all(self.doc.bytes.by_ref()) {
 									Ok(_) => {
 										print!(
 											"{}{}File saved to: {}{}",
 											termion::cursor::Goto(1, self.terminal_size.y as u16),
 											termion::clear::CurrentLine,
-											output_dir,
+											path.as_str(),
 											style::Reset
 										);
 									}
@@ -245,72 +219,38 @@ impl HexViewer {
 									"{}{}Error opening file: {}{}",
 									termion::cursor::Goto(1, self.terminal_size.y as u16),
 									termion::clear::CurrentLine,
-									output_dir,
+									path.as_str(),
 									style::Reset
 								);
 							}
+						} else {
+							print!(
+								"{}{}File saving canceled.{}",
+								termion::cursor::Goto(1, self.terminal_size.y as u16),
+								termion::clear::CurrentLine,
+								style::Reset
+							);
 						}
-					} else {
-						print!(
-							"{}{}Unable to save! File is opened in Read-Only Mode {}",
-							termion::cursor::Goto(1, self.terminal_size.y as u16),
-							termion::clear::CurrentLine,
-							style::Reset
-						);
 					}
 				}
 				Key::Char('i') => {
-					if self.read_only {
-						print!(
-							"{}{}Unable to edit! File is opened in Read-Only Mode {}",
-							termion::cursor::Goto(1, self.terminal_size.y as u16),
-							termion::clear::CurrentLine,
-							style::Reset
-						);
-					} else if self.cur_byte == -1 {
-						print!(
-							"{}{}Unable to edit current cell! Address is unavailable {}",
-							termion::cursor::Goto(1, self.terminal_size.y as u16),
-							termion::clear::CurrentLine,
-							style::Reset
-						);
-					} else {
-						drop(stdout); // Drop raw mode
-						print!(
-							"{}{}New value for 0x{:08X}: {}",
-							termion::cursor::Goto(1, self.terminal_size.y as u16),
-							termion::clear::CurrentLine,
-							self.cur_byte,
-							style::Reset
-						);
-						std::io::stdout().flush().unwrap();
-
-						let mut input = String::new();
-						std::io::stdin().read_line(&mut input).unwrap();
-						let input = input.trim();
-
-						// Re-enable raw mode
-                    	stdout = std::io::stdout().into_raw_mode().unwrap();
-						self.show_document();
-
-						// Parse the input as a hexadecimal value
-						match u8::from_str_radix(input, 16) {
-							Ok(value) => {
+					if !self.read_only && self.cur_byte != -1 {
+						let prompt = format!("New hex value for 0x{:08X}: ", self.cur_byte);
+						if let Some(hex_input) = self.read_input_line(&prompt, &format!("{:02X}", self.doc.bytes[self.cur_byte as usize])) {
+							if let Ok(value) = u8::from_str_radix(hex_input.trim(), 16) {
 								if let Some(byte) = self.doc.bytes.get_mut(self.cur_byte as usize) {
 									self.history.push((self.cur_byte as usize, *byte));
 									*byte = value;
 									self.show_document();
 									print!(
-										"{}{}Value of 0x{:08X} updated to: {:02X}{}",
+										"{}{}Updated 0x{:08X}{}",
 										termion::cursor::Goto(1, self.terminal_size.y as u16),
 										termion::clear::CurrentLine,
 										self.cur_byte,
-										value,
 										style::Reset
 									);
 								}
-							}
-							Err(_) => {
+							} else {
 								print!(
 									"{}{}Invalid hexadecimal input!{}",
 									termion::cursor::Goto(1, self.terminal_size.y as u16),
@@ -318,6 +258,13 @@ impl HexViewer {
 									style::Reset
 								);
 							}
+						} else {
+							print!(
+								"{}{}Changes Cancelled!{}",
+								termion::cursor::Goto(1, self.terminal_size.y as u16),
+								termion::clear::CurrentLine,
+								style::Reset
+							);
 						}
 					}
 				}
@@ -360,6 +307,39 @@ impl HexViewer {
 
 			stdout.flush().unwrap();
 		}
+	}
+
+	fn read_input_line(&mut self, prompt: &str, default_input: &str) -> Option<String> {
+		let mut stdout = stdout();
+		let mut input = String::from(default_input);
+
+		let y = self.terminal_size.y as u16;
+		print!("{}{}{}{}", termion::cursor::Goto(1, y), termion::clear::CurrentLine, prompt, input);
+		stdout.flush().unwrap();
+
+		for key in stdin().keys() {
+			match key.unwrap() {
+				Key::Esc | Key::Ctrl('c')=> return None, // Cancel input
+				Key::Char('\n') => break, // Finish input
+				Key::Char(c) => {
+					input.push(c);
+					print!("{}", c);
+					stdout.flush().unwrap();
+				}
+				Key::Backspace => {
+					if input.pop().is_some() {
+						print!("{} {}", termion::cursor::Left(1), termion::cursor::Left(1));
+						stdout.flush().unwrap();
+					}
+				}
+				_ => {}
+			}
+		}
+
+		self.show_document();
+
+		if input.is_empty() { return None; }
+		Some(input)
 	}
 
 	fn inc_x(&mut self) {
@@ -413,6 +393,8 @@ impl HexViewer {
 		// );
 	}
 }
+
+
 
 fn main() {
 	let matches = Command::new("hexim")
