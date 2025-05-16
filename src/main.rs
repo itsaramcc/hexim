@@ -88,15 +88,17 @@ impl HexViewer {
 		print!("{}{}", termion::clear::All,
 			termion::cursor::Goto(1, 1));
 		
+		let mut buffer = String::new();
 		for row in self.start_row..std::cmp::min(self.start_row + self.terminal_size.y - 3,self.rows)  {
-			print!("{:08X} |", row * self.hex_columns);
+			buffer.push_str(&format!("{:08X} |", row * self.hex_columns));
 			for index in (row * self.hex_columns)..(row +1) * self.hex_columns {
-				self.print_bit(index);
+				buffer.push_str(self.print_bit(index).as_str());
 			}
-			println!("\r")
+			buffer.push_str("\r\n");
 		}
+		print!("{}", buffer);
 
-		println!("{}", termion::cursor::Goto(1, (self.terminal_size.y - 2) as u16),);
+		print!("{}", termion::cursor::Goto(1, (self.terminal_size.y - 1) as u16));
 
 		if self.cur_byte >= 0 {
 			print!(
@@ -131,37 +133,41 @@ impl HexViewer {
 		self.set_pos(self.cur_pos.x, self.cur_pos.y);
 	}
 
-	fn print_bit(&self, index: usize) {
+	fn print_bit(&self, index: usize) -> String {
+		let mut buffer = String::new();
+
 		let changed_bytes: HashSet<usize> = self.history.iter().map(|(byte, _)| *byte).collect();
 		if index >= self.doc.bytes.len() {
 			if index == (self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3{
-				print!(" {}{}--{}",
+				buffer.push_str(&format!(" {}{}--{}",
 				color::Bg(color::Red),
 				color::Fg(color::White),
-				style::Reset);
+				style::Reset));
 			} else {
-				print!(" {}--{}",
+				buffer.push_str(&format!(" {}--{}",
 					color::Fg(color::Red),
-					style::Reset);
+					style::Reset));
 			}
 		} else {
 			if index == self.cur_byte as usize {
-				print!(" {}{}{:02X}{}",
+				buffer.push_str(&format!(" {}{}{:02X}{}",
 					color::Bg(color::Black),
 					color::Fg(color::White),
 					self.doc.bytes[index],
-					style::Reset);
+					style::Reset));
 			} else {
 				if changed_bytes.contains(&index) {
-					print!(" {}{:02X}{}",
+					buffer.push_str(&format!(" {}{:02X}{}",
 						color::Bg(color::LightCyan),
 						self.doc.bytes[index],
-						style::Reset);
+						style::Reset));
 				} else {
-					print!(" {:02X}", self.doc.bytes[index]);
+					buffer.push_str(&format!(" {:02X}", self.doc.bytes[index]));
 				}
 			}
 		}
+
+		return buffer;
 	}
 
 	fn set_pos(&mut self, x: usize, y: usize) {
