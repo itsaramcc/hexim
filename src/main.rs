@@ -102,7 +102,7 @@ impl HexViewer {
 
 		if self.cur_byte >= 0 {
 			print!(
-				"{}{}{:08X} ({},{}) line-count={} Filename: {}{}",
+				"{}{}{:08X} ({},{}) line-count={} Filename: {} {}{}",
 				color::Fg(color::Red),
 				style::Bold,
 				self.cur_byte,
@@ -110,17 +110,19 @@ impl HexViewer {
 				self.cur_pos.y,
 				self.rows,
 				self.file_name,
+				if self.read_only { "(read-only)" } else { "" },
 				style::Reset
 			);
 		} else {
 			print!(
-				"{}{}-------- ({},{}) line-count={} Filename: {}{}",
+				"{}{}-------- ({},{}) line-count={} Filename: {} {}{}",
 				color::Fg(color::Red),
 				style::Bold,
 				(self.cur_pos.x - 9) / 3,
 				self.cur_pos.y,
 				self.rows,
 				self.file_name,
+				if self.read_only { "(read-only)" } else { "" },
 				style::Reset
 			);
 		}
