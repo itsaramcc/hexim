@@ -1,7 +1,6 @@
 // Based on https://packt.medium.com/implementing-terminal-i-o-in-rust-4a44652b0f11
 
 use clap::{Arg, ArgAction, Command};
-use std::collections::HashSet;
 use std::fs;
 use std::io::{stdin, stdout, Write};
 use termion::event::Key;
@@ -9,17 +8,14 @@ use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 use termion::{color, style};
 
-struct Doc {
-	bytes: Vec<u8>
-}
-
 #[derive(Debug)]
 struct Coordinates {
 	pub x: usize,
 	pub y: usize,
 }
 struct HexViewer {
-	doc: Doc,
+	doc: Vec<u8>,
+	doc_static: Vec<u8>,
 	read_only: bool,
 	history: Vec<(usize, u8)>,
 	cur_byte: isize,
@@ -33,13 +29,14 @@ struct HexViewer {
 
 impl HexViewer {
 	fn init_file(file_name: &str, read_only: bool) -> Self {
-		let doc_file = Doc { bytes: fs::read(file_name).unwrap() };
+		let doc = fs::read(file_name).unwrap();
 		let size = termion::terminal_size().unwrap_or((80, 80));
 		let hex_columns: usize = (size.0 as usize - 10) / 3;
-		let rows = (doc_file.bytes.len() +hex_columns -1) / hex_columns;
+		let rows = (doc.len() +hex_columns -1) / hex_columns;
 
 		Self {
-			doc: doc_file,
+			doc: doc.clone(),
+			doc_static: doc,
 			read_only,
 			history: vec![],
 			cur_byte: 0,
@@ -59,13 +56,14 @@ impl HexViewer {
 	}
 
 		fn init_length(length: usize, read_only: bool) -> Self {
-		let doc_file = Doc { bytes: vec![0; length] };
+		let doc = vec![0; length];
 		let size = termion::terminal_size().unwrap();
 		let hex_columns: usize = (size.0 as usize - 10) / 3;
-		let rows = (doc_file.bytes.len() +hex_columns -1) / hex_columns;
+		let rows = (doc.len() +hex_columns -1) / hex_columns;
 
 		Self {
-			doc: doc_file,
+			doc: doc.clone(),
+			doc_static: doc,
 			read_only,
 			history: vec![],
 			cur_byte: 0,
@@ -138,8 +136,7 @@ impl HexViewer {
 	fn print_bit(&self, index: usize) -> String {
 		let mut buffer = String::new();
 
-		let changed_bytes: HashSet<usize> = self.history.iter().map(|(byte, _)| *byte).collect();
-		if index >= self.doc.bytes.len() {
+		if index >= self.doc.len() {
 			if index == (self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3{
 				buffer.push_str(&format!(" {}{}--{}",
 				color::Bg(color::Red),
@@ -155,17 +152,10 @@ impl HexViewer {
 				buffer.push_str(&format!(" {}{}{:02X}{}",
 					color::Bg(color::Black),
 					color::Fg(color::White),
-					self.doc.bytes[index],
+					self.doc[index],
 					style::Reset));
 			} else {
-				if changed_bytes.contains(&index) {
-					buffer.push_str(&format!(" {}{:02X}{}",
-						color::Bg(color::LightCyan),
-						self.doc.bytes[index],
-						style::Reset));
-				} else {
-					buffer.push_str(&format!(" {:02X}", self.doc.bytes[index]));
-				}
+				buffer.push_str(&format!(" {:02X}", self.doc[index]));
 			}
 		}
 
@@ -176,7 +166,7 @@ impl HexViewer {
 		self.cur_pos.x = x;
 		self.cur_pos.y = y;
 		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
-		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
+		if self.cur_byte as usize >= self.doc.len() { self.cur_byte = -1; }
 		print!("{}",
 			termion::cursor::Goto(self.cur_pos.x as u16, (self.cur_pos.y) as u16)
 		);
@@ -188,16 +178,44 @@ impl HexViewer {
 		let mut keys = stdin.keys();
 		while let Some(Ok(c)) = keys.next() {
 			match c {
-				Key::Ctrl('x') => {
-					break;
+				Key::Ctrl('x') => {		// Exit
+					if self.doc != self.doc_static {
+						let prompt = "You have unsaved changes. Exit without saving? (Y/n): ";
+						if let Some(answer) = self.read_input_line(prompt, "") {
+							let answer = answer.trim().to_lowercase();
+							if answer == "y" || answer == "yes" {
+								break;
+							} else {
+								self.show_document();
+								print!(
+									"{}{}Exit canceled.{}",
+									termion::cursor::Goto(1, self.terminal_size.y as u16),
+									termion::clear::CurrentLine,
+									style::Reset
+								);
+							}
+						} else {
+							self.show_document();
+							print!(
+								"{}{}Exit canceled.{}",
+								termion::cursor::Goto(1, self.terminal_size.y as u16),
+								termion::clear::CurrentLine,
+								style::Reset
+							);
+						}
+					} else {
+						break;
+					}
 				}
-				Key::Ctrl('o') => {
+				Key::Ctrl('o') => {		// Write out
 					if !self.read_only {
 						let default_name: String = if self.file_name == "untitled" { "".to_owned() } else { self.file_name.clone() };
 						if let Some(path) = self.read_input_line("Output file path: ", &default_name) {
 							if let Ok(mut file) = std::fs::File::create(path.as_str()) {
-								match file.write_all(self.doc.bytes.by_ref()) {
+								match file.write_all(self.doc.by_ref()) {
 									Ok(_) => {
+										self.doc_static = self.doc.clone();
+										self.file_name = path.clone();
 										print!(
 											"{}{}File saved to: {}{}",
 											termion::cursor::Goto(1, self.terminal_size.y as u16),
@@ -235,12 +253,12 @@ impl HexViewer {
 						}
 					}
 				}
-				Key::Char('i') => {
+				Key::Char('i') => {		// Insert Value
 					if !self.read_only && self.cur_byte != -1 {
 						let prompt = format!("New hex value for 0x{:08X}: ", self.cur_byte);
-						if let Some(hex_input) = self.read_input_line(&prompt, &format!("{:02X}", self.doc.bytes[self.cur_byte as usize])) {
+						if let Some(hex_input) = self.read_input_line(&prompt, &format!("{:02X}", self.doc[self.cur_byte as usize])) {
 							if let Ok(value) = u8::from_str_radix(hex_input.trim(), 16) {
-								if let Some(byte) = self.doc.bytes.get_mut(self.cur_byte as usize) {
+								if let Some(byte) = self.doc.get_mut(self.cur_byte as usize) {
 									self.history.push((self.cur_byte as usize, *byte));
 									*byte = value;
 									self.show_document();
@@ -270,9 +288,9 @@ impl HexViewer {
 						}
 					}
 				}
-				Key::Ctrl('z') => {
+				Key::Ctrl('z') => {		// Undo Changes
 					if let Some(last) = self.history.pop() {
-						if let Some(byte) = self.doc.bytes.get_mut(last.0) {
+						if let Some(byte) = self.doc.get_mut(last.0) {
 							*byte = last.1;
 							self.show_document();
 							print!(
@@ -285,7 +303,9 @@ impl HexViewer {
 						}
 					}
 				}
-				Key::Left | Key::Char('h') => {
+
+				// Navigation
+				Key::Left | Key::Char('h') => {		
 					self.dec_x();
 					self.show_document();
 				}
@@ -349,7 +369,7 @@ impl HexViewer {
 			self.cur_pos.x += 3;
 		}
 		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
-		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
+		if self.cur_byte as usize >= self.doc.len() { self.cur_byte = -1; }
 		// print!(
 		// 	"{}",
 		// 	termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
@@ -360,7 +380,7 @@ impl HexViewer {
 			self.cur_pos.x -= 3;
 		}
 		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
-		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
+		if self.cur_byte as usize >= self.doc.len() { self.cur_byte = -1; }
 		// print!(
 		// 	"{}",
 		// 	termion::cursor::Goto(self.cur_pos.x as u16, self.cur_pos.y as u16)
@@ -373,7 +393,7 @@ impl HexViewer {
 		if self.cur_pos.y > self.start_row + self.terminal_size.y - 3 && self.start_row < self.rows - self.terminal_size.y + 3 { self.start_row += 1; }
 
 		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
-		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
+		if self.cur_byte as usize >= self.doc.len() { self.cur_byte = -1; }
 
 		// print!(
 		// 	"{}",
@@ -387,7 +407,7 @@ impl HexViewer {
 		if self.cur_pos.y < self.start_row { self.start_row = self.cur_pos.y -1; }
 
 		self.cur_byte = ((self.cur_pos.y -1) * self.hex_columns + (self.cur_pos.x - 12) / 3) as isize;
-		if self.cur_byte as usize >= self.doc.bytes.len() { self.cur_byte = -1; }
+		if self.cur_byte as usize >= self.doc.len() { self.cur_byte = -1; }
 
 		// print!(
 		// 	"{}",
@@ -466,10 +486,10 @@ fn main() {
 			for row in 0..viewer.rows {
 				print!("{:08X} |", row * viewer.hex_columns);
 				for index in (row * viewer.hex_columns)..(row +1) * viewer.hex_columns {
-					if index >= viewer.doc.bytes.len() {
+					if index >= viewer.doc.len() {
 						print!(" --");
 					} else {
-						print!(" {:02X}", viewer.doc.bytes[index]);
+						print!(" {:02X}", viewer.doc[index]);
 					}
 				}
 				println!()
